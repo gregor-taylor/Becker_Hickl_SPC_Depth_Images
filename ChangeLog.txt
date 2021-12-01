@@ -3,3 +3,6 @@ V1.1 - Tested and put onto B&H PC 02/12/19. Added a check of the gating plot bef
 V1.2 - Added the option to enable or disable the empty pixels being set to NaN.
 V1.3 - Added bin factor to add the data to enable higher SNR with less resolution
 V1.4 - Added ability to load .npy files created with the SPC/SET analyser.
+V1.5 - Added binning capability to bin data
+
+V2 and 2.1 - Began using the Reikna library and OpenCL to implement parallel processing of the histogram arrays V2.1 had a working basic version but advise using with caution. 
