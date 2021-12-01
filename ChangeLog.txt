@@ -1,4 +1,5 @@
 V1 - Stable and working - tested on B&H PC and all good except require to explicitly set matplotlib.use to 'qt5agg' or plots are blocking. Wierdly they are not on my laptop.
 V1.1 - Tested and put onto B&H PC 02/12/19. Added a check of the gating plot before the main body of code is run, allowing you to stop it it if looks odd. Also added a fix where if the max count in the histo is 1 (i.e nothing except noise) then the pixel is set to NaN and the pixel is plotted as a blank. 
 V1.2 - Added the option to enable or disable the empty pixels being set to NaN.
-V1.2 - Added bin factor to add the data to enable higher SNR with less resolution
+V1.3 - Added bin factor to add the data to enable higher SNR with less resolution
+V1.4 - Added ability to load .npy files created with the SPC/SET analyser.

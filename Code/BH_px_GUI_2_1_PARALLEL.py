@@ -21,12 +21,19 @@ from scipy.optimize import curve_fit
 from math import sqrt
 import csv
 import plotly.graph_objects as go
+from reikna.cluda import dtypes, ocl_api, functions
+from reikna.fft import FFT
+from reikna.core import Annotation, Type, Transformation, Parameter, Computation
+from reikna.algorithms import PureParallel
+import reikna.helpers as helpers
+import time
+
 
 class LIDARDataPx(Tk):
     def __init__(self, *args, **kwargs):
         Tk.__init__(self, *args, **kwargs)
         Tk.wm_title(self, "LIDAR Data Processing")
-        Tk.iconbitmap(self, default="UD_Smiley.ico")
+        #Tk.iconbitmap(self, default="UD_Smiley.ico")
         #Data holders
         self.filename=''
         self.IRF_file = ''
@@ -67,7 +74,7 @@ class LIDARDataPx(Tk):
 class MainPage(ttk.Frame):
     def __init__(self, parent, controller):
         Frame.__init__(self, parent)
-        load_file_butt=ttk.Button(self, text='Choose sdt file', command=lambda:self.load_file(controller))
+        load_file_butt=ttk.Button(self, text='Choose sdt/npy file', command=lambda:self.load_file(controller))
         load_file_butt.grid(row=1, column=1)
 
         ttk.Label(self, text="Gating start/end: (leave end at 0 for no gating)").grid(row=2,column=1)
@@ -109,42 +116,59 @@ class MainPage(ttk.Frame):
 
 
     def load_file(self, controller):
-        controller.filename = askopenfilename(initialdir="C:\\", title="Choose an sdt file")
+        controller.filename = askopenfilename(initialdir="C:\\", title="Choose an sdt/npy file")
         
     def plot_it(self, controller):
         if controller.filename=='':
             messagebox.showerror('Error', 'No sdt file loaded!')
         else:
-            #Takes main file with all pixels#
-            sdt_file=SdtFile(controller.filename)
-            image_size_x=sdt_file.data[0].shape[0]
-            image_size_y=sdt_file.data[0].shape[1]
-            #Pulls the TAC paramters from the sdt file. For some reason the 'times' array from the sdt file is not the correct times - poss software not updated for new card.
-            adc_re=sdt_file.measure_info[0].adc_re
-            tac_r=sdt_file.measure_info[0].tac_r
-            tac_g=sdt_file.measure_info[0].tac_g
-            dt=tac_r/tac_g/adc_re
-            times=np.arange(0,int(adc_re))*dt
-
-            image_data=sdt_file.data[0]
-            #Binning
-            if controller.bin_toggle.get() == 1:
-                processed_data = np.ndarray((image_size_x, image_size_y), dtype='object') #new array for data as new shape
-                bin_factor=int(controller.bin_factor.get())
+            #Checks if .sdt or .npy
+            if controller.filename[-3:] == 'sdt':
+                #Takes main file with all pixels#
+                sdt_file=SdtFile(controller.filename)
+                #Pulls the TAC paramters from the sdt file. For some reason the 'times' array from the sdt file is not the correct times - poss software not updated for new card.
+                adc_re=sdt_file.measure_info[0].adc_re
+                tac_r=sdt_file.measure_info[0].tac_r
+                tac_g=sdt_file.measure_info[0].tac_g
+                image_data=sdt_file.data[0]
+                image_size_x=image_data.shape[0]
+                image_size_y=image_data.shape[1]
+            elif controller.filename[-3:] == 'npy':
+                temp_data=np.load(controller.filename, allow_pickle=True)
+                image_size_x=temp_data.shape[0]
+                image_size_y=temp_data.shape[1]
+                image_data=np.ndarray((image_size_x, image_size_y), dtype='object')
                 for i in range(image_size_y):
                     for j in range(image_size_x):
-                        processed_data[i][j]=image_data[i][j].reshape(int(adc_re/bin_factor),-1).sum(axis=1)
-                image_data=processed_data
+                        image_data[i][j]=temp_data[i][j][0]
+                #Need to update to pull TAC parameters from .set file, or bundle them with the numpy data
+                adc_re=4096
+                tac_r=2.5016787e-8
+                tac_g=15
+            else:
+                messagebox.showerror('Error', 'Invalid filetype!')
+            #Gets image size and cimputes dt/times arrays
+            
+            dt=tac_r/tac_g/adc_re
+            times=np.arange(0,int(adc_re))*dt
+            #Binning
+            if controller.bin_toggle.get() == 1:
+                bin_factor=int(controller.bin_factor.get())
+                image_data=image_data.reshape(*image_data.shape[:2], -1, bin_factor).sum(axis=-1)
                 dt=dt*bin_factor
-                times=range(0,int(adc_re/bin_factor))*dt
+                times=np.arange(0,int(adc_re/bin_factor))*dt
 
             #sets end point to end if gating not required
             if controller.end_gate.get()=='0':
                 end_point=len(image_data[0][0])
                 start_point=0
+                number_bins=end_point-start_point
             else:
                 start_point=round(int((int(controller.start_gate.get())*1e-12)/dt)) #converts back from ps to bins
                 end_point=round(int((int(controller.end_gate.get())*1e-12)/dt))
+                number_bins=end_point-start_point
+                image_data=image_data[:,:,start_point:end_point]
+                times=times[start_point:end_point]
 
             #If removing the BR/Noise this takes a seperate sdt file#
             if controller.SBR_var.get() == 1:
@@ -166,20 +190,20 @@ class MainPage(ttk.Frame):
                 for j in range(image_size_x):
                     if controller.SBR_var.get() == 1:
                         image_data[i][j]=image_data[i][j]-noise_data
-                    max_count=np.amax(image_data[i][j][start_point:end_point])
+                    max_count=np.amax(image_data[i][j])
                     max_arr[i][j]=max_count
                     if max_count > max_count_all:
                         max_count_all=max_count
                         pixel=(i,j)
             empty_pixels=np.transpose(np.nonzero(max_arr < 2))
             #plots the brightest and fits it to see where we're at
-            centre, scale = fit_exp_mod_gauss(times[start_point:end_point], image_data[pixel[0]][pixel[1]][start_point:end_point], dt, plotting=True)
+            centre, scale = fit_exp_mod_gauss(times, image_data[pixel[0]][pixel[1]], dt, plotting=True)
             #Checks if you're happy with gating?
             MsgBox = tk.messagebox.askquestion ('Proceed?','Are you happy with the gating?',icon = 'warning')
             if MsgBox == 'yes':
                 #Takes brightest pixel as IRF or takes external sdt file#
                 if controller.IRF_var.get() == 1:
-                    IRF_pix = image_data[pixel[0]][pixel[1]][start_point:end_point]
+                    IRF_pix = image_data[pixel[0]][pixel[1]]
                 elif controller.fit_var.get() == 1:
                     pass
                 else:
@@ -207,20 +231,39 @@ class MainPage(ttk.Frame):
                     for i in range(image_size_y):
                         for j in range(image_size_x):
                             try:
-                                centre, scale = fit_exp_mod_gauss(times[start_point:end_point], image_data[i][j][start_point:end_point], dt)
+                                centre, scale = fit_exp_mod_gauss(times, image_data[i][j], dt)
                                 img_arr[i,j]=centre
                             except TypeError:
                                 img_arr[i,j]=float('nan')
                             except RuntimeError:
                                 img_arr[i,j]=float('nan')                
                 else:
-                    #cross correlates the data#
-                    for i in range(image_size_y):
-                        for j in range(image_size_x):
-                            corr = cross_correlate(image_data[i][j][start_point:end_point] , IRF_pix)
-                            max_val = np.argmax(corr)
-                            img_arr[i,j]=max_val       
-                
+                    t0=time.time()
+                    #set thread up
+                    api=ocl_api()
+                    device=api.get_platforms()[0].get_devices()[2] #Do in setting later
+                    #print('Performing on {}'.format(device))
+                    thread=api.Thread(device)
+                    thread.device_params.local_mem_size = 32768 #Due to Apple bug - reported 01/21 by Bogdan
+                    #Take IRF, FFT and conj it on CPU and then send to GPU (1)
+                    IRF_pix=np.conj(np.fft.fft(IRF_pix)) #A complex128
+                    #chop up the data into 64x64 chunks as at a adc_re of 4096 (max) this is the largest the AMD card can handle.
+                    image_data=cubify(image_data,(64,64,number_bins))
+                    IRF_arr=np.full(image_data[0].shape, IRF_pix)
+                    out_arr=np.zeros((image_data.shape[0],image_data.shape[1],image_data.shape[2])) #just for max vals          
+
+                    t0=time.time()
+                    image_data=image_data.astype('float64')
+                    IRF_dev=thread.to_device(IRF_arr) #send to GPU
+                    res_dev=thread.array(image_data[0].shape, np.complex128)
+                    planC=XCorr2d(image_data[0], IRF_arr).compile(thread)
+                    for i in range(image_data.shape[0]):
+                        data_dev=thread.to_device(image_data[i])
+                        planC(res_dev, data_dev, IRF_dev)
+                        result=np.roll(res_dev.get(), int(number_bins/2), axis=2)
+                        out_arr[i]=np.argmax(result, axis=2)                 
+                    #put it back into a big image
+                    img_arr=unblockshaped(out_arr,image_size_x,image_size_y)
                 #Scale and convert to mm
                 img_arr= -img_arr - np.nanmean(-img_arr)
                 img_arr=img_arr*dt*1e6*3e8*0.5
@@ -252,9 +295,12 @@ class MainPage(ttk.Frame):
                # fig2.suptitle('2D')
                 
                 #counts#
+                tfin=time.time()-t0
+                print('Time to process: {} seconds'.format(tfin))
                 fig3=plt.figure()            
                 cnt_map=plt.imshow(max_arr, cmap=cm.jet, origin='lower')
                 fig3.colorbar(cnt_map, shrink=0.5, aspect=5)
+                print(np.mean(max_arr))
                 #fig3.suptitle('Counts Map')    
 
                 fig5=go.Figure(data=[go.Heatmap(z=img_arr, colorscale='Jet', colorbar=dict(thickness=80,
@@ -349,9 +395,79 @@ def exp_mod_gauss(x, b, m, s, l):
     return y
     #l=Lambda, s=Sigma, m=Mu, #b=scaling
 
+def cubify(arr, newshape):
+    oldshape = np.array(arr.shape)
+    repeats = (oldshape / newshape).astype(int)
+    tmpshape = np.column_stack([repeats, newshape]).ravel()
+    order = np.arange(len(tmpshape))
+    order = np.concatenate([order[::2], order[1::2]])
+    # newshape must divide oldshape evenly or else ValueError will be raised
+    return arr.reshape(tmpshape).transpose(order).reshape(-1, *newshape)
+
+def unblockshaped(arr, h, w):
+    """
+    Return an array of shape (h, w) where
+    h * w = arr.size
+
+    If arr is of shape (n, nrows, ncols), n sublocks of shape (nrows, ncols),
+    then the returned array preserves the "physical" layout of the sublocks.
+    """
+    n, nrows, ncols = arr.shape
+    return (arr.reshape(h//nrows, -1, nrows, ncols)
+               .swapaxes(1,2)
+               .reshape(h, w))
+# A transformation that transforms a real array to a complex one
+# by adding a zero imaginary part
+def get_complex_trf(arr):
+    complex_dtype = dtypes.complex_for(arr.dtype)
+    return Transformation(
+            [Parameter('output', Annotation(Type(complex_dtype, arr.shape), 'o')),
+             Parameter('input', Annotation(arr, 'i'))],
+    """
+            ${output.store_same}(
+                COMPLEX_CTR(${output.ctype})(
+                    ${input.load_same},
+                    0));
+            """)
+
+def get_multiply_trf(arr):
+    return Transformation(
+        [Parameter('output', Annotation(arr, 'o')),
+         Parameter('input1', Annotation(arr, 'i')),
+         Parameter('input2', Annotation(arr, 'i'))],
+        "${output.store_same}(${mul}(${input1.load_same}, ${input2.load_same}));",
+        connectors=['output', 'input1'],
+        render_kwds=dict(mul=functions.mul(arr.dtype, arr.dtype, out_dtype=arr.dtype))
+    )
+
+#XCORR
+class XCorr2d(Computation): #as above but arr1 is the 2D array of the returns and arr2 is the already conjigated and FFTed IRF
+    def __init__(self, arr1, arr2):
+        Computation.__init__(self,[
+            Parameter('output', Annotation(arr2, 'o')),
+            Parameter('input1', Annotation(arr1, 'i')),
+            Parameter('input2', Annotation(arr2, 'i'))]),
+    def _build_plan(self, plan_factory, device_params, output, input1, input2):
+        plan=plan_factory()
+
+        complex_trf = get_complex_trf(input1)
+        mul_trf=get_multiply_trf(input2)
+
+        fft=FFT(complex_trf.output, axes=(2,))
+        fft.parameter.input.connect(complex_trf, complex_trf.output, new_input=complex_trf.input)
+        fft.parameter.output.connect(mul_trf, mul_trf.input1, IRFArr=mul_trf.input2, op=mul_trf.output)
+
+        int_arr=plan.temp_array_like(input2)
+        plan.computation_call(fft, int_arr, input2, input1, inverse=0)
+
+        ifft=FFT(int_arr, axes=(2,))
+        plan.computation_call(ifft, output, int_arr, inverse=1)
+
+        return plan
+
 def main():
     app = LIDARDataPx()
-    app.geometry("550x200")
+    app.geometry("650x250")
     app.mainloop()
 
 if __name__ == '__main__':

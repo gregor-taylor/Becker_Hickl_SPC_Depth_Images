@@ -21,12 +21,13 @@ from scipy.optimize import curve_fit
 from math import sqrt
 import csv
 import plotly.graph_objects as go
+import time
 
 class LIDARDataPx(Tk):
     def __init__(self, *args, **kwargs):
         Tk.__init__(self, *args, **kwargs)
         Tk.wm_title(self, "LIDAR Data Processing")
-        Tk.iconbitmap(self, default="UD_Smiley.ico")
+        #Tk.iconbitmap(self, default="UD_Smiley.ico")
         #Data holders
         self.filename=''
         self.IRF_file = ''
@@ -67,7 +68,7 @@ class LIDARDataPx(Tk):
 class MainPage(ttk.Frame):
     def __init__(self, parent, controller):
         Frame.__init__(self, parent)
-        load_file_butt=ttk.Button(self, text='Choose sdt file', command=lambda:self.load_file(controller))
+        load_file_butt=ttk.Button(self, text='Choose sdt/npy file', command=lambda:self.load_file(controller))
         load_file_butt.grid(row=1, column=1)
 
         ttk.Label(self, text="Gating start/end: (leave end at 0 for no gating)").grid(row=2,column=1)
@@ -109,24 +110,41 @@ class MainPage(ttk.Frame):
 
 
     def load_file(self, controller):
-        controller.filename = askopenfilename(initialdir="C:\\", title="Choose an sdt file")
+        controller.filename = askopenfilename(initialdir="C:\\", title="Choose an sdt/npy file")
         
     def plot_it(self, controller):
         if controller.filename=='':
             messagebox.showerror('Error', 'No sdt file loaded!')
         else:
-            #Takes main file with all pixels#
-            sdt_file=SdtFile(controller.filename)
-            image_size_x=sdt_file.data[0].shape[0]
-            image_size_y=sdt_file.data[0].shape[1]
-            #Pulls the TAC paramters from the sdt file. For some reason the 'times' array from the sdt file is not the correct times - poss software not updated for new card.
-            adc_re=sdt_file.measure_info[0].adc_re
-            tac_r=sdt_file.measure_info[0].tac_r
-            tac_g=sdt_file.measure_info[0].tac_g
+            #Checks if .sdt or .npy
+            if controller.filename[-3:] == 'sdt':
+                #Takes main file with all pixels#
+                sdt_file=SdtFile(controller.filename)
+                #Pulls the TAC paramters from the sdt file. For some reason the 'times' array from the sdt file is not the correct times - poss software not updated for new card.
+                adc_re=sdt_file.measure_info[0].adc_re
+                tac_r=sdt_file.measure_info[0].tac_r
+                tac_g=sdt_file.measure_info[0].tac_g
+                image_data=sdt_file.data[0]
+                image_size_x=image_data.shape[0]
+                image_size_y=image_data.shape[1]
+            elif controller.filename[-3:] == 'npy':
+                temp_data=np.load(controller.filename, allow_pickle=True)
+                image_size_x=temp_data.shape[0]
+                image_size_y=temp_data.shape[1]
+                image_data=np.ndarray((image_size_x, image_size_y), dtype='object')
+                for i in range(image_size_y):
+                    for j in range(image_size_x):
+                        image_data[i][j]=temp_data[i][j][0]
+                #Need to update to pull TAC parameters from .set file, or bundle them with the numpy data
+                adc_re=4096
+                tac_r=2.5016787e-8
+                tac_g=15
+            else:
+                messagebox.showerror('Error', 'Invalid filetype!')
+            #Gets image size and cimputes dt/times arrays
+            
             dt=tac_r/tac_g/adc_re
             times=np.arange(0,int(adc_re))*dt
-
-            image_data=sdt_file.data[0]
             #Binning
             if controller.bin_toggle.get() == 1:
                 processed_data = np.ndarray((image_size_x, image_size_y), dtype='object') #new array for data as new shape
@@ -136,7 +154,7 @@ class MainPage(ttk.Frame):
                         processed_data[i][j]=image_data[i][j].reshape(int(adc_re/bin_factor),-1).sum(axis=1)
                 image_data=processed_data
                 dt=dt*bin_factor
-                times=range(0,int(adc_re/bin_factor))*dt
+                times=np.arange(0,int(adc_re/bin_factor))*dt
 
             #sets end point to end if gating not required
             if controller.end_gate.get()=='0':
@@ -214,6 +232,7 @@ class MainPage(ttk.Frame):
                             except RuntimeError:
                                 img_arr[i,j]=float('nan')                
                 else:
+                    t0=time.time()
                     #cross correlates the data#
                     for i in range(image_size_y):
                         for j in range(image_size_x):
@@ -252,9 +271,12 @@ class MainPage(ttk.Frame):
                # fig2.suptitle('2D')
                 
                 #counts#
+                tfin=time.time()-t0
+                print('Time to process: {} seconds'.format(tfin))
                 fig3=plt.figure()            
                 cnt_map=plt.imshow(max_arr, cmap=cm.jet, origin='lower')
                 fig3.colorbar(cnt_map, shrink=0.5, aspect=5)
+                print(np.mean(max_arr))
                 #fig3.suptitle('Counts Map')    
 
                 fig5=go.Figure(data=[go.Heatmap(z=img_arr, colorscale='Jet', colorbar=dict(thickness=80,
@@ -351,7 +373,7 @@ def exp_mod_gauss(x, b, m, s, l):
 
 def main():
     app = LIDARDataPx()
-    app.geometry("550x200")
+    app.geometry("650x250")
     app.mainloop()
 
 if __name__ == '__main__':
