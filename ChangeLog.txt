@@ -4,5 +4,10 @@ V1.2 - Added the option to enable or disable the empty pixels being set to NaN.
 V1.3 - Added bin factor to add the data to enable higher SNR with less resolution
 V1.4 - Added ability to load .npy files created with the SPC/SET analyser.
 V1.5 - Added binning capability to bin data
+V1.6 - added functionality to scale the depth images, now plots both autoscale and scaled in 2d/3d (4 plots) if needed. 
+-Added functionality to centre brightest pixel IRF if its anywhere near edges of histogram as results in much improved x-corr with all depths. 
+-Fixed the load (non-auto) IRF functionality. 
+-Fixed the scaling in 2d heat maps so grid is square. 
+-Added functionality to plot any pixel history based on coordinates to check hotspots/empty spots. -Added some print statements.
 
 V2 and 2.1 - Began using the Reikna library and OpenCL to implement parallel processing of the histogram arrays V2.1 had a working basic version but advise using with caution. 

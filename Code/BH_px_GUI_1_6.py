@@ -179,6 +179,8 @@ class MainPage(ttk.Frame):
                 image_data=image_data.reshape(*image_data.shape[:2], -1, bin_factor).sum(axis=-1)
                 dt=dt*bin_factor
                 times=np.arange(0,int(adc_re/bin_factor))*dt
+            else:
+                bin_factor=1
 
             #sets end point to end if gating not required
             if controller.end_gate.get()=='0':
@@ -226,7 +228,26 @@ class MainPage(ttk.Frame):
                 self.update()
                 #Takes brightest pixel as IRF or takes external sdt file#
                 if controller.IRF_var.get() == 1:
+                    #centre the irf
+                    binned_re=adc_re/bin_factor
+                    tolerance=binned_re/3
                     IRF_pix = image_data[pixel[0]][pixel[1]]
+                    irf_max_ind=np.argmax(IRF_pix)
+                    if irf_max_ind-tolerance<=0:
+                        i=(binned_re/2)-irf_max_ind
+                        IRF_pix = np.roll(IRF_pix, int(i[0]))
+                        plt.plot(IRF_pix)
+                        plt.show()
+                        self.update()
+
+                    elif irf_max_ind+tolerance>=binned_re:
+                        i=0-(irf_max_ind-(binned_re/2))
+                        IRF_pix = np.roll(IRF_pix, int(i[0]))
+                        plt.plot(IRF_pix)
+                        plt.show()
+                        self.update()
+
+
                 elif controller.fit_var.get() == 1:
                     pass
                 else:
@@ -319,6 +340,10 @@ class MainPage(ttk.Frame):
                                ticklen=3, tickcolor='black',
                                tickfont=dict(size=36, color='black')))])
                     fig7.update_layout(width = 1500, height = 1500, font=dict(family="Arial",size=36,color="black"))
+                    fig7.update_yaxes(
+                                     scaleanchor = "x",
+                                     scaleratio = 1,
+                                     )
                     fig7.show()    
 
 
@@ -326,6 +351,10 @@ class MainPage(ttk.Frame):
                                ticklen=3, tickcolor='black',
                                tickfont=dict(size=36, color='black')))])
                 fig5.update_layout(width = 1500, height = 1500, font=dict(family="Arial",size=36,color="black"))
+                fig5.update_yaxes(
+                                     scaleanchor = "x",
+                                     scaleratio = 1,
+                                     )
                 fig5.show()    
 
                 if controller.aspect_togg.get() == 1:
