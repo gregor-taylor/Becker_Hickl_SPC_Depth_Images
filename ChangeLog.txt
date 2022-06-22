@@ -9,5 +9,6 @@ V1.6 - added functionality to scale the depth images, now plots both autoscale a
 -Fixed the load (non-auto) IRF functionality. 
 -Fixed the scaling in 2d heat maps so grid is square. 
 -Added functionality to plot any pixel history based on coordinates to check hotspots/empty spots. -Added some print statements.
+V1.7 - Fixed the functionality where a 'good' IRF is used to x-correlate instead of the brightest pixel. Needed to scale it. Seems to result in a modest image improvement.
 
 V2 and 2.1 - Began using the Reikna library and OpenCL to implement parallel processing of the histogram arrays V2.1 had a working basic version but advise using with caution. 
